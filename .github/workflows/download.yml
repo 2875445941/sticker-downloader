@@ -1,0 +1,79 @@
+name: Sticker Downloader
+on:
+  workflow_dispatch:
+    inputs:
+      sticker_url:
+        description: '贴纸包链接（如：https://t.me/addstickers/line260498155989_by_moe_sticker_bot）'
+        required: true
+
+jobs:
+  download:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: 设置Python环境
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          
+      - name: 安装依赖
+        run: |
+          pip install telethon requests
+          
+      - name: 创建下载脚本
+        run: |
+          cat > download.py << 'EOF'
+          from telethon import TelegramClient
+          import os
+          import zipfile
+          import sys
+
+          sticker_url = sys.argv[1]
+          sticker_set_name = sticker_url.split('/')[-1]
+
+          api_id = int(os.environ['API_ID'])
+          api_hash = os.environ['API_HASH']
+          bot_token = os.environ['BOT_TOKEN']
+
+          client = TelegramClient('session', api_id, api_hash).start(bot_token=bot_token)
+
+          async def download_stickers():
+              path = f'downloads/{sticker_set_name}'
+              os.makedirs(path, exist_ok=True)
+              
+              try:
+                  stickers = await client.get_messages('stickers', search=sticker_set_name, limit=100)
+                  for i, sticker in enumerate(stickers):
+                      if sticker.sticker:
+                          await sticker.download_media(file=os.path.join(path, f'{i}.webp'))
+                          print(f"下载贴纸 {i+1}/{len(stickers)}")
+                  
+                  # 压缩ZIP
+                  with zipfile.ZipFile(f'{sticker_set_name}.zip', 'w') as zipf:
+                      for root, dirs, files in os.walk(path):
+                          for file in files:
+                              zipf.write(os.path.join(root, file), 
+                                        os.path.relpath(os.path.join(root, file), 
+                                                      os.path.join(path, '..')))
+                  print(f"✅ 贴纸包已保存为 {sticker_set_name}.zip")
+                  
+              except Exception as e:
+                  print(f"❌ 下载失败: {e}")
+                  sys.exit(1)
+
+          client.loop.run_until_complete(download_stickers())
+          EOF
+          
+      - name: 运行下载脚本
+        env:
+          API_ID: ${{ secrets.API_ID }}
+          API_HASH: ${{ secrets.API_HASH }}
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+        run: python download.py ${{ github.event.inputs.sticker_url }}
+        
+      - name: 上传下载结果
+        uses: actions/upload-artifact@v4
+        with:
+          name: sticker-pack
+          path: '*.zip'
